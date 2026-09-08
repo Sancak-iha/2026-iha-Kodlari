@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>2026 Sancak İha Yer İstasyonu</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --border: #000000;
+    --border-soft: #000000;
+    --border-line: #000000;
+    --text: #000000;
+    --text-dim: #020202;
+    --text-mute: #050505;
+    --bg: #ffffff;
+    --bg-soft: #f6f6f6;
+    --hover: #ececec;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', 'Inter', system-ui, -apple-system, Roboto, sans-serif;
+    font-size: 13px;
+    min-height: 100vh;
+    padding: 24px 32px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+
+  /* ============ Connections bar ============ */
+  .conn-title {
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 10px;
+    letter-spacing: 0.01em;
+  }
+
+  .conn-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    background:#000000;
+    border: 1px solid var(--border-soft);
+    border-radius: 4px;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+  }
+
+  .conn-label {
+    font-weight: 700;
+    font-size: 13px;
+    margin-right: 4px;
+    color:#ffffff
+  }
+
+  .select-wrap {
+    position: relative;
+    display: inline-block;
+  }
+  .conn-select {
+    appearance: none;
+    -webkit-appearance: none;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    padding: 6px 28px 6px 10px;
+    font-family: 'Segoe UI', 'Inter', system-ui, -apple-system, Roboto, sans-serif;
+    font-size: 13px;
+    color: var(--text);
+    cursor: pointer;
+    border-radius: 3px;
+    min-width: 220px;
+    font-family: 'Segoe UI', 'Inter', system-ui, -apple-system, Roboto, sans-serif;
+  }
+  .conn-select:focus { outline: 1px solid var(--text); outline-offset: 0; }
+  .select-wrap::after {
+    content: '';
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    width: 0; height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid var(--text);
+    transform: translateY(-50%);
+    pointer-events: none;
+  }
+
+  .btn {
+    background:#09ff00;
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 6px 14px;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    border-radius: 3px;
+    transition: background 0.1s ease;
+  }
+  .btn:hover:not(:disabled) { background:#3cff00; }
+  .btn:disabled {
+    color: var(--text-mute);
+    border-color: var(--border-soft);
+    background: var(--bg-soft);
+    cursor: not-allowed;
+  }
+
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    font-size: 12px;
+    font-weight: 700;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--bg);
+    letter-spacing: 0.02em;
+  }
+  .status-pill .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--text);
+  }
+  .status-pill.connected .dot {
+    background: var(--bg);
+    border: 1.5px solid var(--text);
+    box-sizing: border-box;
+  }
+
+  .spacer { flex: 1; }
+
+  .refresh-btn {
+    background:#ffffff;
+    color:#000000;
+    border: 1px solid var(--text);
+    padding: 5px 12px;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    border-radius: 3px;
+    letter-spacing: 0.02em;
+  }
+  
+
+  /* ============ Section header ============ */
+  .section {
+    margin-bottom: 24px;
+  }
+  .section-header {
+    font-size: 15px;
+    font-weight: 700;
+    padding: 8px 12px;
+    background:#000000;
+    color: #ffffff;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    letter-spacing: 0.01em;
+  }
+
+  /* ============ Data tables ============ */
+  .data-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-top: 12px;
+  }
+
+  .data-table {
+    border: 1px solid var(--border-soft);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .data-table-header {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    background:#000000;
+    border-bottom: 1px solid var(--border-soft);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  .data-table-header > div {
+    padding: 8px 14px;
+    border-right: 1px solid var(--border-soft);
+  }
+  .data-table-header > div:last-child { border-right: none; 
+  
+  
+  }
+
+  .data-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border-bottom: 1px solid var(--border-line);
+  }
+  .data-row:last-child { border-bottom: none; }
+  .data-row:nth-child(even) { background:#000000; }
+  .data-row > div {
+    padding: 8px 14px;
+    font-size: 13px;
+    border-right: 1px solid var(--border-line);
+  }
+  .data-row > div:last-child { border-right: none; }
+  .data-key {background: #000; }
+  .data-val {
+    background: #000;
+    font-family: 'Segoe UI', 'Inter', system-ui, -apple-system, Roboto, sans-serif;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .data-val .unit {
+    color: var(--text-mute);
+    font-size: 11px;
+    margin-left: 3px;
+  }
+
+  /* ============ Charts ============ */
+  .charts-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-top: 12px;
+  }
+  .chart-box {
+    background: #000000;
+    border: 1px solid #000000;
+    border-radius: 3px;
+    padding: 10px 12px 12px;
+    height: 220px;
+    display: flex;
+    flex-direction: column;
+  }
+  .chart-title {
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 700;
+    text-align: center;
+    padding-bottom: 6px;
+    margin-bottom: 6px;
+    border-bottom: 1px solid #222;
+    letter-spacing: 0.03em;
+  }
+  .chart-canvas-wrap {
+    flex: 1;
+    position: relative;
+    min-height: 0;
+  }
+
+  /* ============ Camera ============ */
+  .camera-box {
+    border: 1px solid var(--border-soft);
+    background: #fafafa;
+    height: 320px;
+    border-radius: 3px;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 12px;
+  }
+
+  .camera-box::before,
+  .camera-box::after {
+    content: '';
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    border: 1.5px solid var(--text);
+  }
+  .camera-box::before {
+    top: 12px; left: 12px;
+    border-right: none;
+    border-bottom: none;
+  }
+  .camera-box::after {
+    bottom: 12px; right: 12px;
+    border-left: none;
+    border-top: none;
+  }
+
+  .camera-label {
+    text-align: center;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  .camera-label::before {
+    content: '';
+    display: block;
+    width: 30px;
+    height: 1.5px;
+    background: var(--text-dim);
+    margin: 0 auto 10px;
+  }
+</style>
+</head>
+<body>
+
+  <h1 style="text-align: center;">2026 Sancak İHA Takımı Yer İstasyonu</h1>
+
+<div class="container">
+
+  <!-- ============ CONNECTIONS ============ -->
+  <div class="conn-title">Bağlantı</div>
+  <div class="conn-row">
+    <span class="conn-label">Jetson IP:</span>
+    <input type="text" id="jetsonHost"
+           value="localhost"
+           placeholder="192.168.1.100"
+           style="background:#fff;color:#000;border:1px solid #000;padding:6px 10px;font-family:'Segoe UI',sans-serif;font-size:13px;border-radius:3px;min-width:200px;">
+    <span class="conn-label" style="margin-left:8px;">Port:</span>
+    <input type="text" id="jetsonPort"
+           value="8765"
+           style="background:#fff;color:#000;border:1px solid #000;padding:6px 10px;font-family:'Segoe UI',sans-serif;font-size:13px;border-radius:3px;width:70px;">
+    <button class="btn" id="btnConnect">Bağlan</button>
+    <button class="btn" id="btnDisconnect" disabled style="background:#ff0000;;">Bağlantıyı Kes</button>
+    <span class="status-pill" id="statusPill" >
+      
+      <span id="statusText" >Bağlı Değil</span>
+    </span>
+    <div class="spacer"></div>
+    <button class="refresh-btn" id="btnRefresh">Kamerayı Yenile</button>
+  </div>
+
+  <!-- ============ UÇUŞ VERİLERİ ============ -->
+  <div class="section">
+    <div class="section-header">Uçuş Verileri</div>
+    <div class="data-grid">
+
+      <div class="data-table">
+        <div class="data-table-header">
+          <div style="color: #ffffff;">Parametre</div>
+          <div style="color: #ffffff;">Değer</div>
+        </div>
+        <div class="data-row">
+          <div class="data-key" style="color: #ffffff;" >Pitch</div>
+          <div class="data-val" id="valPitch" style="color: #ffffff;" >0.00<span class="unit">°</span></div>
+        </div>
+        <div class="data-row">
+          <div class="data-key "  style="color: #ffffff;" >Yaw</div>
+          <div class="data-val" id="valYaw" style="color: #ffffff;" >0.00<span class="unit">°</span></div>
+        </div>
+        <div class="data-row">
+          <div class="data-key"  style="color: #ffffff;" >Roll</div>
+          <div class="data-val" id="valRoll" style="color: #ffffff;" >0.00<span class="unit">°</span></div>
+        </div>
+      </div>
+
+      <div class="data-table">
+        <div class="data-table-header">
+          <div style="color: #ffffff;">Parametre</div>
+          <div style="color: #ffffff;">Değer</div>
+        </div>
+        <div class="data-row">
+          <div class="data-key"  style="color: #ffffff;"  > Durum</div>
+          <div class="data-val" id="armStatus"   style="color: #ffffff;" >Disarmed</div>
+        </div>
+        <div class="data-row">
+          <div class="data-key"  style="color: #ffffff;" >Yükseklik</div>
+          <div class="data-val" id="valAlt" style="color: #ffffff;" >0.00<span class="unit">m</span></div>
+        </div>
+        <div class="data-row">
+          <div class="data-key" style="color: #ffffff;" >Hız</div>
+          <div class="data-val" id="valSpeed" style="color:  #ffffff;" >0.00<span class="unit">m/s</span></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ============ GRAFİKLER ============ -->
+  <div class="section">
+    <div class="section-header">Grafikler</div>
+    <div class="charts-grid">
+      <div class="chart-box">
+        <div class="chart-title">İrtifa Grafiği</div>
+        <div class="chart-canvas-wrap"><canvas id="chartAlt"></canvas></div>
+      </div>
+      <div class="chart-box">
+        <div class="chart-title">Hız Grafiği</div>
+        <div class="chart-canvas-wrap"><canvas id="chartSpeed"></canvas></div>
+      </div>
+      <div class="chart-box">
+        <div class="chart-title">Batarya Yüzde</div>
+        <div class="chart-canvas-wrap"><canvas id="chartBattery"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ KAMERA ============ -->
+  <div class="section">
+    <div class="section-header">Kamera</div>
+    <div class="camera-box">
+      <img id="cameraStream" alt=""
+           style="width:100%;height:100%;object-fit:contain;display:none;background:#000;">
+      <div id="cameraPlaceholder" class="camera-label">
+        Bağlantı bekleniyor...
+      </div>
+    </div>
+  </div>
+
+</div>
+
+
+
+<footer style="text-align: center; color:#000 ;">&copy; 2026 Sancak İha Takımı Yazılım Ekibi</footer>
+
+<script>
+  // ============ AYARLAR ============
+  // URL parametreleri: ?jetson=192.168.1.100 ile default IP verebilirsin
+  const urlHost = new URLSearchParams(location.search).get('jetson');
+  const MJPEG_PORT = 8080;      // Python tarafinda --mjpeg-port varsayilan
+  const MAX_POINTS = 60;
+
+  // ============ DOM ============
+  const jetsonHost     = document.getElementById('jetsonHost');
+  const jetsonPort     = document.getElementById('jetsonPort');
+  const btnConnect     = document.getElementById('btnConnect');
+  const btnDisconnect  = document.getElementById('btnDisconnect');
+  const btnRefresh     = document.getElementById('btnRefresh');
+  const statusPill     = document.getElementById('statusPill');
+  const statusText     = document.getElementById('statusText');
+  const armStatus      = document.getElementById('armStatus');
+  const valPitch       = document.getElementById('valPitch');
+  const valYaw         = document.getElementById('valYaw');
+  const valRoll        = document.getElementById('valRoll');
+  const valAlt         = document.getElementById('valAlt');
+  const valSpeed       = document.getElementById('valSpeed');
+  const cameraStream   = document.getElementById('cameraStream');
+  const cameraPlaceholder = document.getElementById('cameraPlaceholder');
+
+  // URL param varsa default'a yaz
+  if (urlHost) jetsonHost.value = urlHost;
+
+  // ============ CHARTS ============
+  function makeChart(canvasId, label, color, yMax) {
+    const ctx = document.getElementById(canvasId).getContext('2d');
+    return new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{
+          label: label, data: [],
+          borderColor: color, backgroundColor: color + '22',
+          borderWidth: 1.5, tension: 0.25, pointRadius: 0, fill: true
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: {
+          legend: {
+            display: true, position: 'top', align: 'start',
+            labels: { color: '#ffffff', font: { size: 10 },
+                      boxWidth: 12, boxHeight: 2 }
+          },
+          tooltip: { enabled: false }
+        },
+        scales: {
+          x: {
+            grid: { color: 'rgba(255,255,255,0.08)', drawBorder: false },
+            ticks: { color: '#888', font: { size: 9 }, maxTicksLimit: 6 },
+            border: { color: '#333' }
+          },
+          y: {
+            min: 0, max: yMax,
+            grid: { color: 'rgba(255,255,255,0.08)', drawBorder: false },
+            ticks: { color: '#888', font: { size: 9 }, stepSize: yMax / 10 },
+            border: { color: '#333' }
+          }
+        }
+      }
+    });
+  }
+
+  const chartAlt     = makeChart('chartAlt',     'İrtifa (m)',  '#5db3e9', 100);
+  const chartSpeed   = makeChart('chartSpeed',   'Hız (m/s)',   '#e878a8', 30);
+  const chartBattery = makeChart('chartBattery', 'Batarya (%)', '#6dd490', 100);
+
+  function pushChart(chart, value, ts) {
+    chart.data.labels.push(ts);
+    chart.data.datasets[0].data.push(value);
+    if (chart.data.labels.length > MAX_POINTS) {
+      chart.data.labels.shift();
+      chart.data.datasets[0].data.shift();
+    }
+    chart.update('none');
+  }
+
+  // ============ KAMERA ============
+  function startCamera(host) {
+    const url = `http://${host}:${MJPEG_PORT}/stream.mjpg?t=${Date.now()}`;
+    console.log('[CAM] Akış:', url);
+    cameraStream.src = url;
+    cameraStream.style.display = 'block';
+    cameraPlaceholder.style.display = 'none';
+
+    cameraStream.onerror = () => {
+      console.warn('[CAM] Görüntü alınamıyor');
+      cameraStream.style.display = 'none';
+      cameraPlaceholder.style.display = 'block';
+      cameraPlaceholder.textContent = 'Kamera akışı yok';
+    };
+  }
+
+  function stopCamera() {
+    cameraStream.src = '';
+    cameraStream.style.display = 'none';
+    cameraPlaceholder.style.display = 'block';
+    cameraPlaceholder.textContent = 'Bağlantı bekleniyor...';
+  }
+
+  function refreshCamera() {
+    // Akış donduysa yeniden başlat
+    if (cameraStream.src) {
+      const host = jetsonHost.value.trim();
+      if (host) startCamera(host);
+    }
+  }
+
+  // ============ UI ============
+  function setConnected(isConnected) {
+    if (isConnected) {
+      statusPill.classList.add('connected');
+      statusText.textContent = 'Bağlı';
+      btnConnect.disabled = true;
+      btnDisconnect.disabled = false;
+      jetsonHost.disabled = true;
+      jetsonPort.disabled = true;
+    } else {
+      statusPill.classList.remove('connected');
+      statusText.textContent = 'Bağlı Değil';
+      btnConnect.disabled = false;
+      btnDisconnect.disabled = true;
+      jetsonHost.disabled = false;
+      jetsonPort.disabled = false;
+      valPitch.innerHTML = '0.00<span class="unit">°</span>';
+      valYaw.innerHTML   = '0.00<span class="unit">°</span>';
+      valRoll.innerHTML  = '0.00<span class="unit">°</span>';
+      valAlt.innerHTML   = '0.00<span class="unit">m</span>';
+      valSpeed.innerHTML = '0.00<span class="unit">m/s</span>';
+      armStatus.textContent = 'Disarmed';
+    }
+  }
+
+  // ============ WEBSOCKET ============
+  let ws = null;
+  let reconnectTimer = null;
+  let userDisconnected = false;
+
+  function connectWs() {
+    const host = jetsonHost.value.trim();
+    const port = jetsonPort.value.trim() || '8765';
+    if (!host) { alert('Jetson IP girin.'); return; }
+
+    const url = `ws://${host}:${port}`;
+    console.log('[WS] Bağlanılıyor:', url);
+    statusText.textContent = 'Bağlanıyor...';
+    userDisconnected = false;
+
+    try {
+      ws = new WebSocket(url);
+    } catch (e) {
+      console.error('[WS] URL hatalı:', e);
+      statusText.textContent = 'URL Hatalı';
+      return;
+    }
+
+    ws.onopen = () => {
+      console.log('[WS] Açıldı');
+      setConnected(true);
+      startCamera(host);   // WS açılınca kamerayı da başlat
+    };
+
+    ws.onmessage = (event) => {
+      let msg;
+      try { msg = JSON.parse(event.data); }
+      catch (e) { return; }
+      handleTelemetry(msg);
+    };
+
+    ws.onerror = () => { /* onclose zaten ateşlenecek */ };
+
+    ws.onclose = () => {
+      console.log('[WS] Kapandı');
+      ws = null;
+      setConnected(false);
+      stopCamera();
+      if (!userDisconnected) {
+        statusText.textContent = 'Yeniden Bağlanıyor...';
+        reconnectTimer = setTimeout(connectWs, 2000);
+      }
+    };
+  }
+
+  function disconnectWs() {
+    userDisconnected = true;
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    if (ws) {
+      try { ws.close(); } catch (_) {}
+      ws = null;
+    }
+    stopCamera();
+    setConnected(false);
+  }
+
+  // ============ TELEMETRİ ============
+  function handleTelemetry(t) {
+    if (t.attitude) {
+      valPitch.innerHTML = t.attitude.pitch.toFixed(2) + '<span class="unit">°</span>';
+      valYaw.innerHTML   = t.attitude.yaw.toFixed(2)   + '<span class="unit">°</span>';
+      valRoll.innerHTML  = t.attitude.roll.toFixed(2)  + '<span class="unit">°</span>';
+    }
+    if (t.position) {
+      valAlt.innerHTML = t.position.rel_alt.toFixed(2) + '<span class="unit">m</span>';
+    }
+    if (t.speed) {
+      valSpeed.innerHTML = t.speed.ground.toFixed(2) + '<span class="unit">m/s</span>';
+    }
+    if (t.status) {
+      armStatus.textContent = t.status.armed ? 'Armed' : 'Disarmed';
+    }
+    const now = new Date();
+    const ts = String(now.getHours()).padStart(2,'0') + ':' +
+               String(now.getMinutes()).padStart(2,'0') + ':' +
+               String(now.getSeconds()).padStart(2,'0');
+    if (t.position) pushChart(chartAlt, t.position.rel_alt, ts);
+    if (t.speed)    pushChart(chartSpeed, t.speed.ground, ts);
+    if (t.battery)  pushChart(chartBattery, t.battery.remaining_pct, ts);
+  }
+
+  // ============ BUTONLAR ============
+  btnConnect.addEventListener('click', connectWs);
+  btnDisconnect.addEventListener('click', disconnectWs);
+  btnRefresh.addEventListener('click', refreshCamera);
+
+  setConnected(false);
+</script>
+
+</body>
+</html>

@@ -1,0 +1,265 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sdf version="1.9">
+  <world name="default">
+    <physics type="ode">
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>250</real_time_update_rate>
+    </physics>
+    <gravity>0 0 -9.8</gravity>
+    <magnetic_field>6e-06 2.3e-05 -4.2e-05</magnetic_field>
+    <atmosphere type="adiabatic"/>
+    <scene>
+      <grid>false</grid>
+      <ambient>0.4 0.4 0.4 1</ambient>
+      <background>0.7 0.7 0.7 1</background>
+      <shadows>true</shadows>
+    </scene>
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>1 1</size>
+            </plane>
+          </geometry>
+          <surface>
+            <friction>
+              <ode/>
+            </friction>
+            <bounce/>
+            <contact/>
+          </surface>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>1500 1500</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1</ambient>
+            <diffuse>0.8 0.8 0.8 1</diffuse>
+            <specular>0.8 0.8 0.8 1</specular>
+          </material>
+        </visual>
+        <pose>0 0 0 0 -0 0</pose>
+        <inertial>
+          <pose>0 0 0 0 -0 0</pose>
+          <mass>1</mass>
+          <inertia>
+            <ixx>1</ixx>
+            <ixy>0</ixy>
+            <ixz>0</ixz>
+            <iyy>1</iyy>
+            <iyz>0</iyz>
+            <izz>1</izz>
+          </inertia>
+        </inertial>
+        <enable_wind>false</enable_wind>
+      </link>
+      <pose>0 0 0 0 -0 0</pose>
+      <self_collide>false</self_collide>
+    </model>
+
+    <include>
+      <pose degrees="true">-29 545 0.05 0 0 363</pose>
+      <uri>model://runway</uri>
+    </include>
+
+    <!-- Hedef: hasarli endustriyel bina -->
+    <include>
+      <name>hedef_bina</name>
+      <static>true</static>
+      <pose>0 15 0 0 0 0</pose>
+      <uri>model://Collapsed_industrial_building</uri>
+    </include>
+
+    <!-- Apartman -->
+    <include>
+      <name>apartment</name>
+      <pose>0 -15 0 0 0 0</pose>
+      <uri>model://Apartment</uri>
+    </include>
+
+    <!-- Kirik / cokmus yol -->
+    <model name="kirik_yol">
+      <static>true</static>
+      <pose>-90 20 1 0 0 0</pose>
+      <link name="link">
+
+        <!-- Saglam bolum (bati) -->
+        <collision name="col_a">
+          <pose>-13 0 0.1 0 0 0</pose>
+          <geometry><box><size>14 8 0.2</size></box></geometry>
+        </collision>
+        <visual name="vis_a">
+          <pose>-13 0 0.1 0 0 0</pose>
+          <geometry><box><size>14 8 0.2</size></box></geometry>
+          <material>
+            <ambient>0.16 0.16 0.17 1</ambient>
+            <diffuse>0.20 0.20 0.21 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+
+        <!-- Cokmeye baslayan egik plaka -->
+        <collision name="col_b">
+          <pose>-3.2 0 0.02 0 0.22 0</pose>
+          <geometry><box><size>5 8 0.2</size></box></geometry>
+        </collision>
+        <visual name="vis_b">
+          <pose>-3.2 0 0.02 0 0.22 0</pose>
+          <geometry><box><size>5 8 0.2</size></box></geometry>
+          <material>
+            <ambient>0.15 0.15 0.16 1</ambient>
+            <diffuse>0.19 0.19 0.20 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+
+        <!-- Kopmus / yana devrilmis plaka -->
+        <collision name="col_c">
+          <pose>4.6 -1.0 -0.02 0.12 -0.28 0.06</pose>
+          <geometry><box><size>4 8 0.2</size></box></geometry>
+        </collision>
+        <visual name="vis_c">
+          <pose>4.6 -1.0 -0.02 0.12 -0.28 0.06</pose>
+          <geometry><box><size>4 8 0.2</size></box></geometry>
+          <material>
+            <ambient>0.15 0.15 0.16 1</ambient>
+            <diffuse>0.19 0.19 0.20 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+
+        <!-- Saglam bolum (dogu) -->
+        <collision name="col_d">
+          <pose>13.5 0 0.1 0 0 0</pose>
+          <geometry><box><size>13 8 0.2</size></box></geometry>
+        </collision>
+        <visual name="vis_d">
+          <pose>13.5 0 0.1 0 0 0</pose>
+          <geometry><box><size>13 8 0.2</size></box></geometry>
+          <material>
+            <ambient>0.16 0.16 0.17 1</ambient>
+            <diffuse>0.20 0.20 0.21 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+
+        <!-- Moloz parcalari -->
+        <collision name="col_r1">
+          <pose>0.6 -2.2 0.20 0.20 0 0.40</pose>
+          <geometry><box><size>0.8 0.6 0.4</size></box></geometry>
+        </collision>
+        <visual name="vis_r1">
+          <pose>0.6 -2.2 0.20 0.20 0 0.40</pose>
+          <geometry><box><size>0.8 0.6 0.4</size></box></geometry>
+          <material>
+            <ambient>0.40 0.39 0.37 1</ambient>
+            <diffuse>0.48 0.47 0.45 1</diffuse>
+          </material>
+        </visual>
+
+        <collision name="col_r2">
+          <pose>1.4 0.5 0.15 0 0.15 -0.70</pose>
+          <geometry><box><size>1.2 0.9 0.3</size></box></geometry>
+        </collision>
+        <visual name="vis_r2">
+          <pose>1.4 0.5 0.15 0 0.15 -0.70</pose>
+          <geometry><box><size>1.2 0.9 0.3</size></box></geometry>
+          <material>
+            <ambient>0.42 0.41 0.39 1</ambient>
+            <diffuse>0.50 0.49 0.47 1</diffuse>
+          </material>
+        </visual>
+
+        <collision name="col_r3">
+          <pose>0.2 2.4 0.28 0.30 0.10 1.10</pose>
+          <geometry><box><size>0.6 0.6 0.55</size></box></geometry>
+        </collision>
+        <visual name="vis_r3">
+          <pose>0.2 2.4 0.28 0.30 0.10 1.10</pose>
+          <geometry><box><size>0.6 0.6 0.55</size></box></geometry>
+          <material>
+            <ambient>0.38 0.37 0.35 1</ambient>
+            <diffuse>0.46 0.45 0.43 1</diffuse>
+          </material>
+        </visual>
+
+        <collision name="col_r4">
+          <pose>2.4 -0.8 0.18 0.10 0.25 0.90</pose>
+          <geometry><box><size>1.0 0.7 0.35</size></box></geometry>
+        </collision>
+        <visual name="vis_r4">
+          <pose>2.4 -0.8 0.18 0.10 0.25 0.90</pose>
+          <geometry><box><size>1.0 0.7 0.35</size></box></geometry>
+          <material>
+            <ambient>0.41 0.40 0.38 1</ambient>
+            <diffuse>0.49 0.48 0.46 1</diffuse>
+          </material>
+        </visual>
+
+        <collision name="col_r5">
+          <pose>-0.9 3.0 0.25 0 0.20 0.30</pose>
+          <geometry><box><size>0.5 0.5 0.5</size></box></geometry>
+        </collision>
+        <visual name="vis_r5">
+          <pose>-0.9 3.0 0.25 0 0.20 0.30</pose>
+          <geometry><box><size>0.5 0.5 0.5</size></box></geometry>
+          <material>
+            <ambient>0.39 0.38 0.36 1</ambient>
+            <diffuse>0.47 0.46 0.44 1</diffuse>
+          </material>
+        </visual>
+
+        <collision name="col_r6">
+          <pose>3.6 2.8 0.20 0.15 0 -0.45</pose>
+          <geometry><box><size>0.9 0.8 0.4</size></box></geometry>
+        </collision>
+        <visual name="vis_r6">
+          <pose>3.6 2.8 0.20 0.15 0 -0.45</pose>
+          <geometry><box><size>0.9 0.8 0.4</size></box></geometry>
+          <material>
+            <ambient>0.40 0.39 0.37 1</ambient>
+            <diffuse>0.48 0.47 0.45 1</diffuse>
+          </material>
+        </visual>
+
+      </link>
+    </model>
+
+    <light name="sunUTC" type="directional">
+      <pose>0 0 500 0 -0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <intensity>1</intensity>
+      <direction>0.001 0.625 -0.78</direction>
+      <diffuse>0.904 0.904 0.904 1</diffuse>
+      <specular>0.271 0.271 0.271 1</specular>
+      <attenuation>
+        <range>2000</range>
+        <linear>0</linear>
+        <constant>1</constant>
+        <quadratic>0</quadratic>
+      </attenuation>
+      <spot>
+        <inner_angle>0</inner_angle>
+        <outer_angle>0</outer_angle>
+        <falloff>0</falloff>
+      </spot>
+    </light>
+
+    <spherical_coordinates>
+      <surface_model>EARTH_WGS84</surface_model>
+      <world_frame_orientation>ENU</world_frame_orientation>
+      <latitude_deg>47.397971057728974</latitude_deg>
+      <longitude_deg>8.546163739800146</longitude_deg>
+      <elevation>0</elevation>
+    </spherical_coordinates>
+
+  </world>
+</sdf>

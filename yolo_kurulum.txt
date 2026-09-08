@@ -1,0 +1,144 @@
+pip install ultralytics opencv-python cv_bridge
+sudo apt install ros-jazzy-cv-bridge
+
+pip install numpy==1.26.4
+
+explorer.exe .
+
+python3 yolo_gelismis.py --train --data Fire-Detection-model/data/data.yaml --weights yolov8n.pt --epochs 20 --batch 16 --imgsz 640 --device cpu
+
+
+Speed: 1.5ms preprocess, 48.0ms inference, 0.0ms loss, 0.2ms postprocess per image
+Results saved to /home/vakkas1234/ws_sensor_combined/runs/detect/Fire-Detection-model/runs/train/roboflow-fire
+Eğitim tamamlandı.
+Çıktı: Fire-Detection-model/runs/train/roboflow-fire
+
+
+from roboflow import Roboflow
+
+rf = Roboflow(api_key="zd0VgkHQieYH6GYBmr2y")
+project = rf.workspace("-jwzpw").project("continuous_fire")
+version = project.version(5)
+dataset = version.download("yolov8")
+
+
+
+
+from ultralytics import YOLO
+
+model = YOLO("yolov8n.pt")
+
+model.train(
+    data="/content/continuous_fire-5/data.yaml",
+    epochs=200,
+    imgsz=640
+)
+
+from google.colab import files
+files.download('/content/runs/detect/train/weights/best.pt')
+
+
+
+from google.colab import files
+uploaded = files.upload()  # best.pt yi seç
+
+
+from roboflow import Roboflow
+
+rf = Roboflow(api_key="zd0VgkHQieYH6GYBmr2y")
+project = rf.workspace("data-science-csh9w").project("smoke-detection-project")
+version = project.version(1)
+dataset = version.download("yolov8")
+
+
+from ultralytics import YOLO
+
+model = YOLO('/content/best.pt')  # Az önce indirdiğin fire modeli
+model.train(
+    data=dataset.location + "/data.yaml",
+    epochs=50,
+    imgsz=640,
+    batch=16,
+    patience=20,
+    optimizer="AdamW",
+    augment=True,
+    device=0
+)
+
+
+import os
+# Tüm best.pt dosyalarını bul
+for root, dirs, files in os.walk('/content'):
+    for file in files:
+        if file == 'best.pt':
+            print(os.path.join(root, file))
+
+
+!pip install ultralytics roboflow
+
+
+import yaml
+import shutil
+import os
+from roboflow import Roboflow
+from ultralytics import YOLO
+from google.colab import files
+
+# --- VERİ SETLERİNİ İNDİR ---
+rf = Roboflow(api_key="zd0VgkHQieYH6GYBmr2y")
+
+# Fire veri seti
+fire_project = rf.workspace("-jwzpw").project("continuous_fire")
+fire_dataset = fire_project.version(5).download("yolov8")
+
+# Smoke veri seti
+smoke_project = rf.workspace("data-science-csh9w").project("smoke-detection-project")
+smoke_dataset = smoke_project.version(1).download("yolov8")
+
+# --- VERİ SETLERİNİ BİRLEŞTİR ---
+os.makedirs('/content/combined/images/train', exist_ok=True)
+os.makedirs('/content/combined/images/val', exist_ok=True)
+os.makedirs('/content/combined/labels/train', exist_ok=True)
+os.makedirs('/content/combined/labels/val', exist_ok=True)
+
+# Fire verilerini kopyala
+shutil.copytree(fire_dataset.location + '/train/images', '/content/combined/images/train', dirs_exist_ok=True)
+shutil.copytree(fire_dataset.location + '/valid/images', '/content/combined/images/val', dirs_exist_ok=True)
+shutil.copytree(fire_dataset.location + '/train/labels', '/content/combined/labels/train', dirs_exist_ok=True)
+shutil.copytree(fire_dataset.location + '/valid/labels', '/content/combined/labels/val', dirs_exist_ok=True)
+
+# Smoke verilerini kopyala
+shutil.copytree(smoke_dataset.location + '/train/images', '/content/combined/images/train', dirs_exist_ok=True)
+shutil.copytree(smoke_dataset.location + '/valid/images', '/content/combined/images/val', dirs_exist_ok=True)
+shutil.copytree(smoke_dataset.location + '/train/labels', '/content/combined/labels/train', dirs_exist_ok=True)
+shutil.copytree(smoke_dataset.location + '/valid/labels', '/content/combined/labels/val', dirs_exist_ok=True)
+
+# Birleşik YAML yaz
+combined_yaml = {
+    'train': '/content/combined/images/train',
+    'val': '/content/combined/images/val',
+    'nc': 2,
+    'names': ['fire', 'smoke']
+}
+
+with open('/content/combined/data.yaml', 'w') as f:
+    yaml.dump(combined_yaml, f)
+
+print("Veri seti birleştirildi!")
+
+# --- EĞİT ---
+model = YOLO('yolov8n.pt')
+model.train(
+    data='/content/combined/data.yaml',
+    epochs=50,
+    imgsz=640,
+    batch=16,
+    patience=20,
+    optimizer="AdamW",
+    augment=True,
+    device=0
+)
+
+
+
+python yolo_otonom.py --use-gazebo-fire-coordinate --fire-x 10 --fire-y 10 --fire-z -50 --acceptance-radius 8 --target-timeout 150
