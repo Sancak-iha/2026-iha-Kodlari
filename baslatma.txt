@@ -3,17 +3,18 @@ cd PX4-Autopilot/
 make px4_sitl gz_advanced_plane
 
 --2'nci Terminal--
- cd ws_sensor_combined/
+ cd ros2_px4_ws/
  source /opt/ros/jazzy/setup.bash &&   source install/local_setup.bash
  ros2 run ros_gz_bridge parameter_bridge /world/default/model/advanced_plane_0/link/camera_link/sensor/fpv_camera/image@sensor_msgs/msg/Image@gz.msgs.Image --ros-args -r /world/default/model/advanced_plane_0/link/camera_link/sensor/fpv_camera/image:=/camera/image_ros_1
 
  --3'üncü Terminal--
+   cd ros2_px4_ws/
+   source /opt/ros/jazzy/setup.bash &&   source install/local_setup.bash
    MicroXRCEAgent udp4 -p 8888
 
  --4'üncü Terminal--
- cd ws_sensor_combined/
+ cd ros2_px4_ws/
  source /opt/ros/jazzy/setup.bash &&   source install/local_setup.bash
- python3 yolo_otonom_sim.py --drop-wp 4 //simülasyon da kod başlatma
- python3 yolo_otonom.py --no-gui --drop-wp 4 //asil kod ama degisebilir
- python3 yolo_otonom.py --test-drop
+ python3 yolo_otonom_sim.py
+ python3 yolo_otonom.py
 
