@@ -40,6 +40,15 @@ Ileri bakan kamerada bilinmesi gerekenler:
     gecikme hedefi ileri kaydirir; once --target-bias 0 ile test et,
     sistematik kayma gorursen kucuk bir deger ver.
   - Yer duzlemi DUZ varsayilir (Gazebo'da dogru).
+
+MISSION GUNCELLEME (guvenli surum):
+  - Sunucuya giden her item deepcopy ile degil, alan alan YENIDEN kurulur;
+    tipler (int/float) ve NaN/Inf garanti altina alinir.
+  - Upload oncesi tam dogrulama yapilir; liste bozuksa HIC gonderilmez.
+  - Her RPC retry + otomatik yeniden baglanma ile sarilir; mavsdk_server
+    olurse yeni baglanti acilir ve devam edilir.
+  - Upload yine de olmazsa mission'a HIC DOKUNULMADAN goto_location ile
+    hedefe yonelinir, sonra mission kaldigi yerden devam ettirilir.
 """
 
 import argparse
@@ -166,10 +175,23 @@ def parse_args():
                    help="Hedefi ucus yonunun tersine bu kadar cek (m). Ileri "
                         "kamerada gecikme hedefi ILERI kaydirir; once 0 ile "
                         "olc, sistematik kayma varsa kucuk pozitif ver.")
-    p.add_argument("--upload-settle", type=float, default=1.0)
+    p.add_argument("--upload-settle", type=float, default=1.5)
     p.add_argument("--set-current-settle", type=float, default=1.5)
     p.add_argument("--no-mission-edit", action="store_true")
     p.add_argument("--goto-delay-wp", type=int, default=0)
+
+    # --- Mission guncelleme dayaniklilik ayarlari ---
+    p.add_argument("--mission-rpc-tries", type=int, default=3,
+                   help="Her mission RPC'si icin deneme sayisi.")
+    p.add_argument("--no-verify-upload", action="store_true",
+                   help="Upload sonrasi dogrulama indirmesini atla.")
+    p.add_argument("--no-fallback-goto", action="store_true",
+                   help="Upload olmazsa goto_location yedek planini kullanma.")
+    p.add_argument("--statustext", action="store_true",
+                   help="Koordinati MAVSDK server_utility ile STATUSTEXT olarak "
+                        "gonder. DIKKAT: bazi mavsdk_server surumlerinde bu cagri "
+                        "sunucuyu cokertiyor. Varsayilan KAPALI; koordinat yine "
+                        "loga ve --out-file dosyasina yazilir.")
 
     p.add_argument("--out-file", type=str, default="hedef_koordinat.json")
     p.add_argument("--reconnect-delay", type=float, default=2.0)
@@ -300,10 +322,19 @@ def quat_to_yaw(q):
 
 # MAVLink komut kodlari
 CMD_NAV_WAYPOINT = 16
+CMD_NAV_LOITER_UNLIM = 17
+CMD_NAV_LOITER_TURNS = 18
+CMD_NAV_LOITER_TIME = 19
 CMD_NAV_RTL = 20
 CMD_NAV_LAND = 21
+CMD_NAV_TAKEOFF = 22
+CMD_NAV_VTOL_TAKEOFF = 84
 CMD_NAV_VTOL_LAND = 85
 CMD_DO_LAND_START = 189
+
+# Konumu anlamli olan (x,y != 0 beklenen) komutlar
+KONUMLU_CMD = (CMD_NAV_WAYPOINT, CMD_NAV_LOITER_UNLIM, CMD_NAV_LOITER_TURNS,
+               CMD_NAV_LOITER_TIME, CMD_NAV_LAND, CMD_NAV_VTOL_LAND)
 
 
 def find_insert_index(items):
@@ -459,6 +490,12 @@ class DamagedBuildingNode(Node):
     REPORTED = "KOORDINAT_BILDIRILDI"
     ERROR = "HATA"
 
+    # Mission dogrulama sinirlari
+    LAT_I_MAX = 900000000        # 90 deg * 1e7
+    LON_I_MAX = 1800000000       # 180 deg * 1e7
+    MAX_ITEMS = 1000
+    INT32_MIN = -2147483648      # QGC: "bu alan kullanilmiyor" isareti
+
     def __init__(self, args):
         super().__init__("damaged_building_mission_node")
         self.args = args
@@ -561,6 +598,7 @@ class DamagedBuildingNode(Node):
         self.lat = 0.0
         self.lon = 0.0
         self.agl = 40.0
+        self.alt_amsl = None
         self.quat = [1.0, 0.0, 0.0, 0.0]
         self.nav_state = 0
         self.arm_state = 0
@@ -590,6 +628,10 @@ class DamagedBuildingNode(Node):
         self._sync_warned = False
         self._size_warned = False
 
+        # Mission guncelleme durumu
+        self._drone = None
+        self._patch_busy = False
+
         if args.wp_mode == "replace" and args.target_wp is None:
             self.get_logger().error("--wp-mode replace icin --target-wp zorunlu.")
 
@@ -612,6 +654,14 @@ class DamagedBuildingNode(Node):
     def global_pos_cb(self, msg):
         self.lat = float(msg.lat)
         self.lon = float(msg.lon)
+        alt = getattr(msg, "alt", None)
+        if alt is not None:
+            try:
+                alt = float(alt)
+                if not (math.isnan(alt) or math.isinf(alt)):
+                    self.alt_amsl = alt
+            except (TypeError, ValueError):
+                pass
         self.have_pos = True
         self._push_pose()
 
@@ -835,12 +885,22 @@ class DamagedBuildingNode(Node):
         while rclpy.ok():
             try:
                 drone = await self._connect()
+                self._drone = drone
                 self.get_logger().info("MAVSDK baglandi.")
                 await asyncio.gather(
                     self._watch_mission(drone),
                     self._patch_worker(drone),
                 )
             except Exception as exc:
+                # Mission guncelleme devam ediyorsa yeniden baglanmayi ona birak;
+                # burada yeni bir System acmak transferi ortadan bolerdi.
+                if self._patch_busy:
+                    self.get_logger().warning(
+                        "MAVSDK akisi koptu (%s) ama mission guncelleme suruyor, "
+                        "beklenecek." % exc)
+                    while rclpy.ok() and self._patch_busy:
+                        await asyncio.sleep(0.5)
+                    continue
                 self.get_logger().warning(
                     "MAVSDK dustu (%s). %.1f sn sonra yeniden."
                     % (exc, self.args.reconnect_delay))
@@ -871,6 +931,7 @@ class DamagedBuildingNode(Node):
         while rclpy.ok():
             if self._mission_patch_requested and not self._mission_patch_done:
                 self._mission_patch_done = True
+                self._drone = drone
                 await self._report(drone)
                 if self.args.no_mission_edit:
                     self.state = self.REPORTED
@@ -887,6 +948,11 @@ class DamagedBuildingNode(Node):
             return
         text = "%s [%s]: %.7f, %.7f (+/-%.0fm)" % (
             prefix, t.get("sinif", "?"), t["lat"], t["lon"], t["spread_m"])
+        if not self.args.statustext:
+            # server_utility.send_status_text bazi mavsdk_server surumlerinde
+            # sunucuyu cokertiyor. Varsayilan olarak cagrilmaz.
+            self.get_logger().warning("KOORDINAT: %s" % text)
+            return
         try:
             from mavsdk.server_utility import StatusTextType
             await drone.server_utility.send_status_text(StatusTextType.WARNING, text)
@@ -928,16 +994,194 @@ class DamagedBuildingNode(Node):
                 return
             await asyncio.sleep(0.1)
 
-    async def _set_current(self, drone, seq, retries=4):
+    # ==================================================================
+    # MISSION GUNCELLEME -- guvenli surum
+    # ==================================================================
+
+    # ---------- alan temizleyiciler ----------
+
+    @staticmethod
+    def _f(v, default=0.0, allow_nan=True):
+        """float'a cevir. Cevrilemeyeni ve Inf'i default yap."""
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            return default
+        if math.isinf(v):
+            return default
+        if math.isnan(v):
+            return v if allow_nan else default
+        return v
+
+    @staticmethod
+    def _i(v, default=0):
+        """int'e cevir. Cevrilemeyeni ve NaN/Inf'i default yap."""
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return default
+        if math.isnan(f) or math.isinf(f):
+            return default
+        return int(round(f))
+
+    def _new_item(self, src, seq=0, x=None, y=None, z=None, command=None,
+                  current=None, autocontinue=None, param2=None):
+        """Bir item'dan TEMIZ yeni bir MissionItem uret.
+
+        deepcopy yerine bu kullanilir. Her alanin tipi ve araligi burada
+        garanti altina alinir; bozuk bir alan sunucuya hic gitmez.
+        """
+        from mavsdk.mission_raw import MissionItem
+        return MissionItem(
+            self._i(seq),
+            self._i(getattr(src, "frame", 6), 6),
+            self._i(command if command is not None
+                    else getattr(src, "command", CMD_NAV_WAYPOINT), CMD_NAV_WAYPOINT),
+            1 if self._i(current if current is not None
+                         else getattr(src, "current", 0)) else 0,
+            1 if self._i(autocontinue if autocontinue is not None
+                         else getattr(src, "autocontinue", 1), 1) else 0,
+            self._f(getattr(src, "param1", 0.0)),
+            self._f(param2 if param2 is not None else getattr(src, "param2", 0.0)),
+            self._f(getattr(src, "param3", 0.0)),
+            self._f(getattr(src, "param4", float("nan"))),
+            self._i(x if x is not None else getattr(src, "x", 0)),
+            self._i(y if y is not None else getattr(src, "y", 0)),
+            self._f(z if z is not None else getattr(src, "z", 0.0)),
+            self._i(getattr(src, "mission_type", 0)),
+        )
+
+    def _konum_kullanilmiyor(self, it):
+        """QGC bu item'da konumu 'kullanilmiyor' olarak isaretlemis mi?"""
+        return (it.x == self.INT32_MIN or it.y == self.INT32_MIN
+                or (it.x == 0 and it.y == 0))
+
+    def _rebuild(self, items, current_seq=-1):
+        """Tum listeyi temiz item'lara donustur; seq ve current bayraklarini duzelt."""
+        return [self._new_item(it, seq=i, current=1 if i == current_seq else 0)
+                for i, it in enumerate(items)]
+
+    def _validate(self, items, current_seq):
+        """Upload oncesi son kontrol. Hata listesi doner; BOS DEGILSE GONDERME.
+
+        NOT: QGC/PX4 mission'larinda x=y=INT32_MIN (-2147483648) ve param=NaN
+        "bu alan kullanilmiyor" demektir (kamera komutlari, DO_* komutlari).
+        Bunlar BOZUK DEGILDIR ve aynen korunmalidir. Bu yuzden konum ve
+        irtifa kontrolleri sadece gercekten seyrusefer komutlarinda yapilir.
+        """
+        hatalar = []
+        if not items:
+            return ["mission bos"]
+        if len(items) > self.MAX_ITEMS:
+            hatalar.append("cok fazla item (%d)" % len(items))
+        if not (0 <= current_seq < len(items)):
+            hatalar.append("current seq araliginda degil (%d / %d item)"
+                           % (current_seq, len(items)))
+
+        for i, it in enumerate(items):
+            if it.seq != i:
+                hatalar.append("index %d: seq %d (tutarsiz)" % (i, it.seq))
+            if not (1 <= it.command <= 60000):
+                hatalar.append("seq %d: gecersiz command %d" % (i, it.command))
+            if it.mission_type != 0:
+                hatalar.append("seq %d: mission_type %d (ana mission degil)"
+                               % (i, it.mission_type))
+            if it.current not in (0, 1):
+                hatalar.append("seq %d: current %d" % (i, it.current))
+            if it.autocontinue not in (0, 1):
+                hatalar.append("seq %d: autocontinue %d" % (i, it.autocontinue))
+
+            # Inf her zaman hatadir; NaN degildir.
+            for ad in ("param1", "param2", "param3", "param4"):
+                v = getattr(it, ad)
+                if math.isinf(v):
+                    hatalar.append("seq %d: %s Inf" % (i, ad))
+            if math.isinf(it.z):
+                hatalar.append("seq %d: alt Inf" % i)
+
+            # Konum/irtifa kontrolu SADECE seyrusefer komutlarinda.
+            if it.command in KONUMLU_CMD:
+                if self._konum_kullanilmiyor(it):
+                    hatalar.append(
+                        "seq %d: seyrusefer komutu (cmd %d) ama konum yok"
+                        % (i, it.command))
+                    continue
+                if abs(it.x) > self.LAT_I_MAX or abs(it.y) > self.LON_I_MAX:
+                    hatalar.append("seq %d: lat/lon araligi disinda (%d, %d)"
+                                   % (i, it.x, it.y))
+                if it.x == 0 and it.y == 0:
+                    hatalar.append("seq %d: konum 0,0 (cmd %d)" % (i, it.command))
+                if math.isnan(it.z) or not (-1000.0 <= it.z <= 20000.0):
+                    hatalar.append("seq %d: gecersiz alt %r" % (i, it.z))
+        return hatalar
+
+    def _dump_items(self, items, basluk="Mission item'lari"):
+        self.get_logger().info("%s (%d):" % (basluk, len(items)))
+        for it in items:
+            self.get_logger().info(
+                "  seq=%-3d fr=%-2d cmd=%-4d cur=%d auto=%d "
+                "p=%.1f/%.1f/%.1f/%.1f x=%d y=%d z=%.1f mt=%d"
+                % (it.seq, it.frame, it.command, it.current, it.autocontinue,
+                   it.param1, it.param2, it.param3, it.param4,
+                   it.x, it.y, it.z, it.mission_type))
+
+    # ---------- baglanti dayanikli RPC ----------
+
+    @staticmethod
+    def _is_down(exc):
+        s = str(exc).lower()
+        return ("unavailable" in s or "connection refused" in s
+                or "socket closed" in s or "failed to connect" in s
+                or "channel closed" in s or "transport" in s)
+
+    async def _reconnect(self):
+        self.get_logger().warning("MAVSDK sunucusuna yeniden baglaniliyor...")
+        await asyncio.sleep(max(self.args.reconnect_delay, 1.0))
+        self._drone = await self._connect()
+        self.get_logger().info("MAVSDK yeniden baglandi.")
+        return self._drone
+
+    async def _mission_rpc(self, isim, *a, tries=None):
+        """mission_raw.<isim>(*a) -- sunucu olurse yeniden baglanip tekrar dener."""
+        tries = max(tries or self.args.mission_rpc_tries, 1)
+        son = None
+        for deneme in range(1, tries + 1):
+            try:
+                return await getattr(self._drone.mission_raw, isim)(*a)
+            except Exception as exc:
+                son = exc
+                self.get_logger().warning(
+                    "%s deneme %d/%d basarisiz: %s" % (isim, deneme, tries, exc))
+                if deneme >= tries:
+                    break
+                if self._is_down(exc):
+                    try:
+                        await self._reconnect()
+                    except Exception as rexc:
+                        self.get_logger().error("Yeniden baglanma olmadi: %s" % rexc)
+                        await asyncio.sleep(self.args.reconnect_delay)
+                else:
+                    await asyncio.sleep(0.6)
+        raise RuntimeError("%s %d denemede de olmadi (son hata: %s)" % (isim, tries, son))
+
+    async def _set_current(self, drone=None, seq=0, retries=4):
+        """Hedef/mevcut waypoint'i ayarla. Sunucu olurse toparlar.
+
+        drone argumani geriye donuk uyumluluk icin durur; kullanilan baglanti
+        her zaman self._drone'dur.
+        """
+        if drone is not None and self._drone is None:
+            self._drone = drone
+        seq = int(seq)
         settle = max(self.args.set_current_settle, 0.1)
         for deneme in range(1, retries + 1):
             try:
-                await drone.mission_raw.set_current_mission_item(seq)
+                await self._mission_rpc("set_current_mission_item", seq, tries=2)
                 self.get_logger().info("set_current(%d) OK (deneme %d)" % (seq, deneme))
                 return True
             except Exception as exc:
                 self.get_logger().warning(
-                    "set_current(%d) deneme %d/%d basarisiz: %s" % (seq, deneme, retries, exc))
+                    "set_current(%d) deneme %d/%d: %s" % (seq, deneme, retries, exc))
             await asyncio.sleep(settle)
             if self.mission_current == seq:
                 self.get_logger().info(
@@ -948,105 +1192,277 @@ class DamagedBuildingNode(Node):
             % (seq, retries, self.mission_current))
         return False
 
+    # ---------- yedek plan: mission'a dokunmadan hedefe git ----------
+
+    async def _amsl_alt(self, timeout=5.0):
+        """Anlik AMSL irtifayi al (goto_location icin).
+
+        Once ROS'tan (vehicle_global_position.alt) alinir; MAVSDK sunucusu
+        olu olsa bile bu calisir. Olmazsa MAVSDK telemetrisine dusulur.
+        """
+        if self.alt_amsl is not None:
+            return float(self.alt_amsl)
+        try:
+            async def ilk():
+                async for p in self._drone.telemetry.position():
+                    return float(p.absolute_altitude_m)
+                return None
+            return await asyncio.wait_for(ilk(), timeout=timeout)
+        except Exception as exc:
+            self.get_logger().warning("AMSL irtifa alinamadi: %s" % exc)
+        return None
+
+    async def _fallback_goto(self, saved_current):
+        """Upload hic olmazsa: mission'i BOZMADAN hedefe yonel, sonra devam et."""
+        t = self.target
+        if t is None:
+            self.state = self.ERROR
+            return
+        self.get_logger().warning(
+            "Mission yuklenemedi. Mission'a DOKUNULMADAN goto_location ile "
+            "hedefe yonelinecek.")
+        try:
+            lead = max(self.args.lead_distance, 0.0)
+            if lead > 0.0:
+                self.state = self.LEADING
+                await self._wait_distance(lead, lat0=self._lock_lat, lon0=self._lock_lon)
+
+            alt = await self._amsl_alt()
+            if alt is None:
+                self.get_logger().error(
+                    "AMSL irtifa yok, goto yapilamiyor. Sadece koordinat bildirildi.")
+                self.state = self.REPORTED
+                return
+
+            await self._drone.action.goto_location(
+                float(t["lat"]), float(t["lon"]), alt, float("nan"))
+            self.state = self.GOING
+            self.get_logger().warning(
+                "HEDEFE YONLENDIRILDI (goto_location): %.7f, %.7f  alt=%.1f m"
+                % (t["lat"], t["lon"], alt))
+
+            kabul = max(self.args.target_acc_rad, 20.0)
+            t0 = time.time()
+            while rclpy.ok() and time.time() - t0 < 120.0:
+                dn, de = latlon_to_offset(self.lat, self.lon, t["lat"], t["lon"])
+                if math.hypot(dn, de) <= kabul:
+                    break
+                await asyncio.sleep(0.2)
+
+            self.state = self.ARRIVED
+            self.get_logger().warning("HEDEF USTUNDE. Mission'a donuluyor.")
+            await self._report(self._drone, prefix="HEDEF USTUNDE")
+
+            if await self._set_current(seq=saved_current):
+                try:
+                    await self._drone.mission.start_mission()
+                    self.get_logger().warning(
+                        "Mission WP%d'den devam ediyor." % saved_current)
+                except Exception as exc:
+                    self.get_logger().warning(
+                        "start_mission olmadi (%s). QGC'den Mission moduna gecilebilir."
+                        % exc)
+        except Exception as exc:
+            self.get_logger().error("Yedek goto da basarisiz: %s" % exc)
+            self.state = self.ERROR
+
+    # ---------- asil mission guncelleme ----------
+
     async def _patch_mission(self, drone):
+        self._drone = drone
+        self._patch_busy = True
         self.state = self.UPDATING
         t = self.target
+        saved_current = max(self.mission_current, 0)
+        wp = None
 
         try:
-            items = await drone.mission_raw.download_mission()
+            if t is None:
+                self.get_logger().error("Hedef yok, mission guncellenmeyecek.")
+                self.state = self.ERROR
+                return
+
+            # ---------- 1) Mission'i indir ----------
+            self.get_logger().info("Mission indiriliyor...")
+            ham = await self._mission_rpc("download_mission")
             saved_current = max(self.mission_current, 0)
+            if not ham:
+                self.get_logger().error("Mission bos indi, guncelleme yapilmayacak.")
+                self.state = self.REPORTED
+                return
             self.get_logger().info(
-                "Mission indirildi: %d item, su an WP%d" % (len(items), saved_current))
+                "Mission indirildi: %d item, su an WP%d" % (len(ham), saved_current))
 
-            lat_i = int(round(t["lat"] * 1e7))
-            lon_i = int(round(t["lon"] * 1e7))
+            # Indirilen her seyi temiz item'lara cevir (deepcopy yok).
+            items = self._rebuild(ham)
+            if saved_current >= len(items):
+                self.get_logger().warning(
+                    "saved_current (%d) item sayisindan buyuk, %d'e cekildi."
+                    % (saved_current, len(items) - 1))
+                saved_current = len(items) - 1
 
+            lat_i = self._i(round(t["lat"] * 1e7))
+            lon_i = self._i(round(t["lon"] * 1e7))
+            if abs(lat_i) > self.LAT_I_MAX or abs(lon_i) > self.LON_I_MAX:
+                self.get_logger().error(
+                    "Hedef koordinat gecersiz (%.7f, %.7f), mission'a eklenmeyecek."
+                    % (t["lat"], t["lon"]))
+                self.state = self.REPORTED
+                return
+
+            acc = self.args.target_acc_rad if self.args.target_acc_rad > 0 else None
+
+            # ---------- 2) Yeni listeyi kur ----------
             if self.args.wp_mode == "replace":
-                wp = self.args.target_wp
+                wp = int(self.args.target_wp)
                 if wp <= saved_current:
-                    self.get_logger().error("WP%d zaten gecildi (su an %d)." % (wp, saved_current))
+                    self.get_logger().error(
+                        "WP%d zaten gecildi (su an %d)." % (wp, saved_current))
                     self.state = self.REPORTED
                     return
-                hit = next((it for it in items if it.seq == wp), None)
-                if hit is None:
-                    self.get_logger().error("seq=%d bulunamadi." % wp)
+                if not (0 <= wp < len(items)):
+                    self.get_logger().error(
+                        "seq=%d yok (mission %d item)." % (wp, len(items)))
                     self.state = self.REPORTED
                     return
-                hit.x, hit.y = lat_i, lon_i
-                if self.args.target_alt is not None:
-                    hit.z = float(self.args.target_alt)
-                if self.args.target_acc_rad > 0:
-                    hit.param2 = float(self.args.target_acc_rad)
+
+                eski = items[wp]
+                items[wp] = self._new_item(
+                    eski, seq=wp, x=lat_i, y=lon_i,
+                    z=self.args.target_alt if self.args.target_alt is not None else eski.z,
+                    param2=acc)
                 self.get_logger().info(
                     "WP%d guncellendi -> %.7f, %.7f (kabul %.0f m)"
-                    % (wp, t["lat"], t["lon"], self.args.target_acc_rad))
+                    % (wp, t["lat"], t["lon"], self.args.target_acc_rad or 0.0))
+
             else:
                 template = next((it for it in items if it.command == CMD_NAV_WAYPOINT), None)
                 if template is None:
-                    template = items[-1] if items else None
+                    template = next((it for it in items if it.command in KONUMLU_CMD), None)
+                if template is None:
+                    template = items[-1]
                 if template is None:
                     self.get_logger().error("Mission bos, sablon waypoint yok.")
                     self.state = self.REPORTED
                     return
 
-                new_it = copy.deepcopy(template)
-                new_it.x, new_it.y = lat_i, lon_i
-                if self.args.target_alt is not None:
-                    new_it.z = float(self.args.target_alt)
-                new_it.command = CMD_NAV_WAYPOINT
-                new_it.current = 0
-                new_it.autocontinue = 1
-
+                # Ekleme indeksi
+                land_idx, land_ad = find_insert_index(items)
                 if self.args.target_wp is not None:
-                    wp = self.args.target_wp
+                    wp = int(self.args.target_wp)
                     nasil = "elle verildi"
                 else:
                     wp = saved_current + 1 + max(self.args.goto_delay_wp, 0)
                     nasil = "WP%d + 1" % saved_current
-                    land_idx, land_ad = find_insert_index(items)
                     if wp > land_idx:
                         wp = land_idx
                         nasil = "inis oncesine cekildi (%s)" % land_ad
-                wp = min(max(wp, 0), len(items))
+                # Sona ekleme yapma: inis/RTL blogunun onunde kal.
+                ust_sinir = min(land_idx, len(items))
+                wp = min(max(wp, 0), ust_sinir)
+                if wp >= len(items):
+                    wp = len(items) - 1
+                    nasil += " (liste sonuna tasindi)"
 
-                if self.args.target_acc_rad > 0:
-                    new_it.param2 = float(self.args.target_acc_rad)
+                new_it = self._new_item(
+                    template, seq=wp, x=lat_i, y=lon_i,
+                    z=self.args.target_alt if self.args.target_alt is not None else template.z,
+                    command=CMD_NAV_WAYPOINT, current=0, autocontinue=1, param2=acc)
 
                 items.insert(wp, new_it)
                 eklenen = 1
 
                 over = max(self.args.overshoot, 0.0)
                 if over > 0.0:
-                    brg = self._approach_bearing(t["lat"], t["lon"])
-                    ov_lat, ov_lon = offset_to_latlon(
-                        t["lat"], t["lon"], over * math.cos(brg), over * math.sin(brg))
-                    ov_it = copy.deepcopy(new_it)
-                    ov_it.x = int(round(ov_lat * 1e7))
-                    ov_it.y = int(round(ov_lon * 1e7))
-                    ov_it.param2 = 0.0
-                    items.insert(wp + 1, ov_it)
-                    eklenen = 2
-                    self.get_logger().info(
-                        "Otesi waypoint: seq=%d  %.7f, %.7f  (%.0f m, kerteriz %.0f deg)"
-                        % (wp + 1, ov_lat, ov_lon, over, math.degrees(brg) % 360))
+                    try:
+                        brg = self._approach_bearing(t["lat"], t["lon"])
+                        ov_lat, ov_lon = offset_to_latlon(
+                            t["lat"], t["lon"],
+                            over * math.cos(brg), over * math.sin(brg))
+                        ov_x = self._i(round(ov_lat * 1e7))
+                        ov_y = self._i(round(ov_lon * 1e7))
+                        if abs(ov_x) <= self.LAT_I_MAX and abs(ov_y) <= self.LON_I_MAX:
+                            ov_it = self._new_item(
+                                new_it, seq=wp + 1, x=ov_x, y=ov_y,
+                                command=CMD_NAV_WAYPOINT, current=0,
+                                autocontinue=1, param2=0.0)
+                            items.insert(wp + 1, ov_it)
+                            eklenen = 2
+                            self.get_logger().info(
+                                "Otesi waypoint: seq=%d  %.7f, %.7f  (%.0f m, kerteriz %.0f deg)"
+                                % (wp + 1, ov_lat, ov_lon, over,
+                                   math.degrees(brg) % 360))
+                        else:
+                            self.get_logger().warning(
+                                "Otesi waypoint koordinati gecersiz, atlandi.")
+                    except Exception as exc:
+                        self.get_logger().warning(
+                            "Otesi waypoint hesaplanamadi (%s), atlandi." % exc)
 
-                for i, it in enumerate(items):
-                    it.seq = i
                 if wp <= saved_current:
                     saved_current += eklenen
 
                 self.get_logger().warning(
-                    "HEDEF WAYPOINT EKLENDI: seq=%d  %.7f, %.7f  alt=%.1f  kabul=%.0f m  [%s]"
-                    % (wp, t["lat"], t["lon"], new_it.z, self.args.target_acc_rad, nasil))
+                    "HEDEF WAYPOINT EKLENDI: seq=%d  %.7f, %.7f  alt=%.1f  "
+                    "kabul=%.0f m  [%s]"
+                    % (wp, t["lat"], t["lon"], new_it.z,
+                       self.args.target_acc_rad or 0.0, nasil))
 
-            await drone.mission_raw.upload_mission(items)
-            await asyncio.sleep(self.args.upload_settle)
+            # ---------- 3) Temizle + dogrula ----------
+            saved_current = min(max(saved_current, 0), len(items) - 1)
+            items = self._rebuild(items, current_seq=saved_current)
+
+            hatalar = self._validate(items, saved_current)
+            if hatalar:
+                self.get_logger().error(
+                    "Mission dogrulamadan GECMEDI, yuklenmeyecek:")
+                for h in hatalar[:20]:
+                    self.get_logger().error("  - %s" % h)
+                self._dump_items(items, "Gonderilmeyen liste")
+                if not self.args.no_fallback_goto:
+                    await self._fallback_goto(max(self.mission_current, 0))
+                else:
+                    self.state = self.ERROR
+                return
+
+            # ---------- 4) Yukle ----------
+            self.get_logger().info("Mission yukleniyor (%d item)..." % len(items))
+            try:
+                await self._mission_rpc("upload_mission", items)
+            except Exception as exc:
+                self.get_logger().error("Upload basarisiz: %s" % exc)
+                self._dump_items(items, "Yuklenemeyen liste")
+                if not self.args.no_fallback_goto:
+                    await self._fallback_goto(max(self.mission_current, 0))
+                else:
+                    self.state = self.ERROR
+                return
+
+            await asyncio.sleep(max(self.args.upload_settle, 0.5))
+            self.get_logger().info("Upload OK.")
+
+            # ---------- 5) Dogrulama indirmesi ----------
+            if not self.args.no_verify_upload:
+                try:
+                    geri = await self._mission_rpc("download_mission", tries=2)
+                    if len(geri) != len(items):
+                        self.get_logger().warning(
+                            "Dogrulama: %d item bekleniyordu, %d geldi."
+                            % (len(items), len(geri)))
+                    else:
+                        self.get_logger().info(
+                            "Dogrulama OK: %d item araca yazildi." % len(geri))
+                except Exception as exc:
+                    self.get_logger().warning(
+                        "Dogrulama indirmesi olmadi (%s), devam ediliyor." % exc)
 
             self._effective_wp = wp
-            kalan = len(items) - wp - 1
+            kalan = max(len(items) - wp - 1, 0)
 
-            await self._set_current(drone, saved_current)
+            # ---------- 6) Mission'i kaldigi yerden surdur ----------
+            await self._set_current(seq=saved_current)
 
+            # ---------- 7) Lead mesafesi ----------
             lead = max(self.args.lead_distance, 0.0)
             if lead > 0.0:
                 self.state = self.LEADING
@@ -1055,14 +1471,33 @@ class DamagedBuildingNode(Node):
                     "gidilecek, sonra WP%d'e yonlendirilecek." % (len(items), lead, wp))
                 await self._wait_distance(lead, lat0=self._lock_lat, lon0=self._lock_lon)
 
-            ok = await self._set_current(drone, wp)
-            self.state = self.GOING if ok else self.ERROR
-            self.get_logger().warning(
-                "WP%d'e (HEDEF) YONLENDIRILDI. Sonra kalan %d waypoint ve inis." % (wp, kalan))
+            # ---------- 8) Hedefe yonel ----------
+            ok = await self._set_current(seq=wp)
+            if ok:
+                self.state = self.GOING
+                self.get_logger().warning(
+                    "WP%d'e (HEDEF) YONLENDIRILDI. Sonra kalan %d waypoint ve inis."
+                    % (wp, kalan))
+            else:
+                self.get_logger().error(
+                    "Hedefe yonlendirme olmadi (WP%d)." % wp)
+                if not self.args.no_fallback_goto:
+                    await self._fallback_goto(max(self.mission_current, 0))
+                else:
+                    self.state = self.ERROR
 
         except Exception as exc:
             self.get_logger().error("Mission guncellenemedi: %s" % exc)
-            self.state = self.ERROR
+            if not self.args.no_fallback_goto and self.target is not None:
+                try:
+                    await self._fallback_goto(max(self.mission_current, 0))
+                except Exception as exc2:
+                    self.get_logger().error("Yedek plan da olmadi: %s" % exc2)
+                    self.state = self.ERROR
+            else:
+                self.state = self.ERROR
+        finally:
+            self._patch_busy = False
 
     # ---------------- HUD ----------------
 
