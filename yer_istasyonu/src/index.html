@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
+               img-src 'self' http: https: data: blob:; connect-src 'self' ws: wss: http: https:;">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>2026 Sancak İHA Yer İstasyonu</title>
+<link rel="stylesheet" href="style.css">
+<!-- Chart.js internetten DEĞİL, uygulamanın içinden yüklenir (sahada internet yok) -->
+<script src="../node_modules/chart.js/dist/chart.umd.js"></script>
+</head>
+<body>
+
+<h1 class="baslik">2026 Sancak İHA Takımı Yer İstasyonu</h1>
+
+<div class="container">
+
+  <!-- ============ BAĞLANTI ============ -->
+  <div class="conn-title">Bağlantı</div>
+  <div class="conn-row">
+    <label class="conn-label" for="jetsonHost">Jetson IP:</label>
+    <input type="text" id="jetsonHost" class="conn-input" value="localhost"
+           placeholder="192.168.1.100" spellcheck="false">
+    <label class="conn-label" for="jetsonPort">Port:</label>
+    <input type="text" id="jetsonPort" class="conn-input port" value="8765" spellcheck="false">
+    <button class="btn" id="btnConnect">Bağlan</button>
+    <button class="btn btn-kes" id="btnDisconnect" disabled>Bağlantıyı Kes</button>
+    <span class="status-pill" id="statusPill">
+      <span class="dot"></span>
+      <span id="statusText">Bağlı Değil</span>
+    </span>
+    <div class="spacer"></div>
+    <button class="refresh-btn" id="btnRefresh">Kamerayı Yenile</button>
+  </div>
+
+  <!-- ============ UÇUŞ VERİLERİ ============ -->
+  <div class="section">
+    <div class="section-header">Uçuş Verileri</div>
+    <div class="data-grid">
+
+      <div class="data-table">
+        <div class="data-table-header"><div>Parametre</div><div>Değer</div></div>
+        <div class="data-row"><div class="data-key">Pitch</div><div class="data-val" id="valPitch">—</div></div>
+        <div class="data-row"><div class="data-key">Yaw</div><div class="data-val" id="valYaw">—</div></div>
+        <div class="data-row"><div class="data-key">Roll</div><div class="data-val" id="valRoll">—</div></div>
+        <div class="data-row"><div class="data-key">Hız</div><div class="data-val" id="valSpeed">—</div></div>
+        <div class="data-row"><div class="data-key">Dikey hız</div><div class="data-val" id="valClimb">—</div></div>
+      </div>
+
+      <div class="data-table">
+        <div class="data-table-header"><div>Parametre</div><div>Değer</div></div>
+        <div class="data-row"><div class="data-key">Durum</div><div class="data-val" id="armStatus">—</div></div>
+        <div class="data-row"><div class="data-key">Uçuş modu</div><div class="data-val" id="valMode">—</div></div>
+        <div class="data-row"><div class="data-key">Yükseklik</div><div class="data-val" id="valAlt">—</div></div>
+        <div class="data-row"><div class="data-key">Batarya</div><div class="data-val" id="valBattery">—</div></div>
+        <div class="data-row"><div class="data-key">GPS</div><div class="data-val" id="valGps">—</div></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ============ GÖREV VE HEDEF ============ -->
+  <div class="section">
+    <div class="section-header">Görev ve Hedef</div>
+    <div class="data-grid">
+
+      <div class="data-table">
+        <div class="data-table-header"><div>Parametre</div><div>Değer</div></div>
+        <div class="data-row"><div class="data-key">Görev durumu</div><div class="data-val" id="valState">—</div></div>
+        <div class="data-row"><div class="data-key">Waypoint</div><div class="data-val" id="valWp">—</div></div>
+        <div class="data-row"><div class="data-key">Tespit örneği</div><div class="data-val" id="valSamples">—</div></div>
+        <div class="data-row"><div class="data-key">Son ret sebebi</div><div class="data-val" id="valReject">—</div></div>
+        <div class="data-row"><div class="data-key">İHA konumu</div><div class="data-val" id="valPos">—</div></div>
+      </div>
+
+      <div class="hedef-kart" id="hedefKart">
+        <div class="hedef-baslik">Hedef koordinatı</div>
+        <div class="hedef-bos" id="hedefBos">Hedef henüz kilitlenmedi.</div>
+        <div class="hedef-icerik" id="hedefIcerik" hidden>
+          <div class="hedef-koord" id="hedefKoord"></div>
+          <div class="hedef-detay" id="hedefDetay"></div>
+          <div class="hedef-butonlar">
+            <button class="btn" id="btnKopyala">Koordinatı kopyala</button>
+            <a class="hedef-link" id="hedefHarita" href="#" target="_blank" rel="noopener">Haritada aç</a>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ============ GRAFİKLER ============ -->
+  <div class="section">
+    <div class="section-header">Grafikler</div>
+    <div class="charts-grid">
+      <div class="chart-box">
+        <div class="chart-title">İrtifa Grafiği</div>
+        <div class="chart-canvas-wrap"><canvas id="chartAlt"></canvas></div>
+      </div>
+      <div class="chart-box">
+        <div class="chart-title">Hız Grafiği</div>
+        <div class="chart-canvas-wrap"><canvas id="chartSpeed"></canvas></div>
+      </div>
+      <div class="chart-box">
+        <div class="chart-title">Batarya Yüzde</div>
+        <div class="chart-canvas-wrap"><canvas id="chartBattery"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ KAMERA ============ -->
+  <div class="section">
+    <div class="section-header section-header-arac">
+      <span>Kamera</span>
+      <span class="kamera-bilgi" id="kameraBilgi"></span>
+      <button class="refresh-btn" id="btnKareKaydet" disabled>Kareyi kaydet</button>
+    </div>
+    <div class="camera-box">
+      <img id="cameraStream" alt="İHA kamera görüntüsü">
+      <div id="cameraPlaceholder" class="camera-label">Bağlantı bekleniyor...</div>
+      <div id="cameraUyari" class="camera-uyari" hidden></div>
+    </div>
+  </div>
+
+  <!-- ============ OLAYLAR ============ -->
+  <div class="section">
+    <div class="section-header section-header-arac">
+      <span>Olaylar</span>
+      <button class="refresh-btn" id="btnLogTemizle">Temizle</button>
+    </div>
+    <div class="log-kutu" id="logKutu"></div>
+  </div>
+
+</div>
+
+<footer class="altbilgi">&copy; 2026 Sancak İHA Takımı Yazılım Ekibi</footer>
+
+<script src="renderer.js"></script>
+</body>
+</html>
